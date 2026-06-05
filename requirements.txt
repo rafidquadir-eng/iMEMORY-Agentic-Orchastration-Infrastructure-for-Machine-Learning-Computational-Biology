@@ -13,3 +13,6 @@ numpy>=1.26.0
 pandas>=2.2.0
 networkx>=3.2
 pytest>=8.0.0
+requests>=2.31.0
+selfies>=2.1.0
+rdkit>=2023.9.1
