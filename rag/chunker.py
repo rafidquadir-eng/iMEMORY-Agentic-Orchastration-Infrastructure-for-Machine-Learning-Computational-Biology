@@ -8,7 +8,10 @@ smaller chunk would sever a result from the method that produced it.
 """
 from __future__ import annotations
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+try:
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+except ImportError:
+    from langchain.text_splitter import RecursiveCharacterTextSplitter  # type: ignore[no-redef]
 
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200

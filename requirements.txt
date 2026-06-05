@@ -16,3 +16,6 @@ pytest>=8.0.0
 requests>=2.31.0
 selfies>=2.1.0
 rdkit>=2023.9.1
+matplotlib>=3.8.0
+plotly>=5.20.0
+umap-learn>=0.5.6
