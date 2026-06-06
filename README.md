@@ -6,6 +6,8 @@ This repository demonstrates the complete multi-agent infrastructure that powers
 
 > **Scope and IP note.** This is a public showcase of the *orchestration framework and pipeline architecture* — agent code, the A2A message contract, tool definitions, control flow, observability, and the vector-operation pipeline. It does **not** contain the proprietary iMEMORY model weights, any real patient-level data, or the IAB-001 chemical structure. The demo trains a HetGAT on a **synthetically engineered 220-patient cohort** with biologically informed cluster structure, and runs the full pipeline on those trained embeddings. No PHI is present anywhere in this repository.
 
+> **Copyright.** © 2026 Immunome AI Biotechnologies, LLC. All Rights Reserved. See `LICENSE` and `NOTICE.md`.
+
 ---
 
 ## Why this exists
