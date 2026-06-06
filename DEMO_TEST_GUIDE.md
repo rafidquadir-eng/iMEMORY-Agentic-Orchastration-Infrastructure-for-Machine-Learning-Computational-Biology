@@ -1,8 +1,5 @@
 # iMEMORY Agentic Platform — Demo & Test Guide
-## Mapped to Genentech Senior Data Scientist, Gen AI Foundation (JD 202602-104487)
-
-Every test runs the real pipeline. No hardcoded values. No auto-passes.
-A reviewer watching this demo should see each JD bullet checked off live.
+.
 Run modules in order — later modules depend on artifacts produced earlier.
 
 ---
