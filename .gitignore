@@ -14,3 +14,7 @@ logs/
 
 outputs/*.md
 outputs/figures/*.png
+
+data/checkpoints/
+data/checkpoints/*.pt
+data/checkpoints/*.npy

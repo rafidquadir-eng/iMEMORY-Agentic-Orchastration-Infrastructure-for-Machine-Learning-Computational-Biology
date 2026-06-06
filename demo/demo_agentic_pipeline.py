@@ -35,11 +35,10 @@ from agents.executor import ExecutionAgent
 from rag.document_loader import BioRAGPipeline
 from langraph_wrapper.graph import create_imemory_graph
 from observability.tracer import AgentTracer
+from training.train import ensure_trained
 
 from data.synthetic.generate_lincs_library import generate_library
 from discovery.lincs_connectivity import inject_planted_reversers
-from imemory.hetgat_ops import init_random_weights, multi_head_hetgat_update
-from imemory.graph_builder import build_synthetic_patient_graph, MODALITIES
 from imemory.therapeutic_signature import compute_therapeutic_delta, inverse_project
 
 # ── Gene panel (128 real HGNC symbols) — identical to demo_full_pipeline ────
@@ -74,52 +73,32 @@ _PLANTED_SEED_SMILES = [
 ]
 
 
-def _embed(graph, weights) -> np.ndarray:
-    h_i        = graph["nodes"]["patient"]
-    neighbor_h = [graph["nodes"][m] for m in MODALITIES]
-    return multi_head_hetgat_update(
-        h_i, neighbor_h,
-        weights["W_tau_self"], weights["W_tau_neighbor"], weights["a_tau"],
-    )
-
-
-def build_cohorts(n_diseased: int = 30, n_healthy: int = 30):
-    weights  = init_random_weights(n_heads=4, dim=128, seed=42)
-    diseased = np.stack([
-        _embed(build_synthetic_patient_graph(f"D-{i:03d}", seed=1000 + i), weights)
-        for i in range(n_diseased)
-    ])
-    healthy  = np.stack([
-        _embed(build_synthetic_patient_graph(f"H-{i:03d}", seed=5000 + i), weights)
-        for i in range(n_healthy)
-    ])
-    rng  = np.random.default_rng(3)
-    axis = rng.normal(size=128).astype("float32")
-    axis /= np.linalg.norm(axis)
-    diseased = diseased + 3.0 * axis
-    return diseased, healthy, weights["W_tau_self"][0]
-
 
 def main() -> None:
     print("=" * 62)
     print("  iMEMORY Agentic Pipeline — Full Orchestrated Demo")
     print("=" * 62)
 
-    # 1. Build cohorts + synthetic LINCS library (pipeline seed data)
-    print("\n[1/4] Building synthetic patient cohorts via HetGAT...")
-    diseased, healthy, W_tau = build_cohorts(n_diseased=30, n_healthy=30)
-    delta                    = compute_therapeutic_delta(
+    # 1. Ensure trained HetGAT checkpoint exists
+    print("\n[1/4] Ensuring HetGAT training checkpoint exists...")
+    trained  = ensure_trained(verbose=True)
+    diseased = trained["diseased_embeddings"]
+    healthy  = trained["healthy_embeddings"]
+    W_tau    = trained["W_tau"]
+    print(f"      diseased={diseased.shape}, healthy={healthy.shape}, W_tau={W_tau.shape}")
+
+    # 2. Compute disease feature signature for LINCS library seeding
+    print("[2/4] Preparing synthetic LINCS fallback library (30,000 cpds)...")
+    delta               = compute_therapeutic_delta(
         diseased.mean(axis=0), healthy.mean(axis=0)
     )
     disease_feature_sig = inverse_project(delta, W_tau)
-
-    print("[2/4] Preparing synthetic LINCS fallback library (30,000 cpds)...")
     library = generate_library(n=30_000, seed=99)
     inject_planted_reversers(
         library, disease_feature_sig, n=5, seed_smiles=_PLANTED_SEED_SMILES
     )
 
-    # 2. Wire the agent infrastructure
+    # 3. Wire the agent infrastructure
     print("[3/4] Wiring agents and LangGraph...")
     tracer   = AgentTracer()
     planner  = PlanningAgent(tracer=tracer)
@@ -132,8 +111,9 @@ def main() -> None:
         "synthetic_library":    library,
         "diseased_embeddings":  diseased,
         "healthy_embeddings":   healthy,
-        "n_diseased":           30,
-        "n_healthy":            30,
+        "n_diseased":           len(diseased),
+        "n_healthy":            len(healthy),
+        "cluster_description":  "SLEDAI 13 non-responders vs healthy",
     }
 
     app = create_imemory_graph(planner, executor, rag, exec_context)

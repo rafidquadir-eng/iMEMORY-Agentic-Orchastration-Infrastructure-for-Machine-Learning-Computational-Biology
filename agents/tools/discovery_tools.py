@@ -23,16 +23,15 @@ PIPELINE_TOOLS: List[Dict[str, Any]] = [
     {
         "name": "build_patient_cohorts",
         "description": (
-            "Build synthetic diseased and healthy patient cohorts via the 5-step "
-            "HetGAT forward pass. Returns n_diseased x 128 and n_healthy x 128 "
-            "embedding matrices plus the W_tau projection matrix."
+            "Load or train the iMEMORY HetGAT on a 5-cluster structured synthetic "
+            "cohort (healthy, SLEDAI 5/10/13 responders, SLEDAI 13 non-responders). "
+            "Returns trained diseased (SLEDAI 13 NR) and healthy embeddings from the "
+            "learned 128-d embedding space, plus the trained W_tau projection matrix."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "n_diseased": {"type": "integer", "default": 30},
-                "n_healthy":  {"type": "integer", "default": 30},
-                "seed":       {"type": "integer", "default": 42},
+                "force_retrain": {"type": "boolean", "default": False},
             },
             "required": [],
         },
@@ -103,10 +102,11 @@ PIPELINE_TOOLS: List[Dict[str, Any]] = [
     {
         "name": "generate_visualizations",
         "description": (
-            "Generate and save 5 matplotlib figures: (1) PCA scatter of diseased vs "
+            "Generate and save 6 matplotlib figures: (1) PCA scatter of diseased vs "
             "healthy embeddings, (2) candidate recovery bar chart colored by QED, "
             "(3) QED vs novelty scatter sized by recovery, (4) LINCS reversal "
-            "potential histogram, (5) closed-loop convergence curve. "
+            "potential histogram, (5) closed-loop convergence curve, "
+            "(6) all-patient cluster embedding PCA scatter (5 clinical clusters). "
             "Returns dict of figure paths."
         ),
         "input_schema": {
@@ -178,35 +178,46 @@ def dispatch_tool(
 # Tool implementations
 # ---------------------------------------------------------------------------
 def _build_patient_cohorts(inp: Dict, ctx: PipelineContext) -> Dict:
-    from demo.demo_full_pipeline import build_cohorts
-
-    n_diseased = int(inp.get("n_diseased", 30))
-    n_healthy  = int(inp.get("n_healthy", 30))
-
-    # Use pre-built embeddings if already supplied in context.
-    if ctx.diseased_embeddings is not None and ctx.healthy_embeddings is not None:
-        diseased = ctx.diseased_embeddings
-        healthy  = ctx.healthy_embeddings
-        if ctx.W_tau is None:
-            from demo.demo_full_pipeline import build_cohorts as _bc
-            _, _, w = _bc(n_diseased, n_healthy)
-            ctx.W_tau = w
+    """
+    Load trained HetGAT embeddings from checkpoint (training automatically
+    if the checkpoint is absent). Populates ctx with trained diseased/healthy
+    embeddings and the learned W_tau projection matrix.
+    """
+    # If caller pre-supplied trained embeddings (e.g. from demo script), use them.
+    if (ctx.diseased_embeddings is not None
+            and ctx.healthy_embeddings is not None
+            and ctx.W_tau is not None
+            and not inp.get("force_retrain", False)):
+        training_source = "pre-supplied (caller)"
+        best_val_acc = "n/a"
     else:
-        diseased, healthy, W_tau = build_cohorts(n_diseased, n_healthy)
-        ctx.diseased_embeddings = diseased
-        ctx.healthy_embeddings  = healthy
-        if ctx.W_tau is None:
-            ctx.W_tau = W_tau
+        from training.train import ensure_trained
+        trained = ensure_trained(verbose=True)
+        ctx.diseased_embeddings = trained["diseased_embeddings"]
+        ctx.healthy_embeddings  = trained["healthy_embeddings"]
+        ctx.W_tau               = trained["W_tau"]
+        training_source = "trained HetGAT (synthetic structured cohort, 5 clusters)"
+        # Try to read best_val_acc from checkpoint
+        try:
+            import torch
+            from training.train import CHECKPOINT_PATH
+            ck = torch.load(CHECKPOINT_PATH, map_location="cpu", weights_only=False)
+            best_val_acc = round(float(ck.get("best_val_acc", 0.0)), 4)
+        except Exception:  # noqa: BLE001
+            best_val_acc = "loaded from checkpoint"
 
     v_d = ctx.diseased_embeddings.mean(axis=0)
     v_h = ctx.healthy_embeddings.mean(axis=0)
     axis_norm = float(np.linalg.norm(v_d - v_h))
 
     return {
-        "n_diseased":       ctx.diseased_embeddings.shape[0],
-        "n_healthy":        ctx.healthy_embeddings.shape[0],
-        "embedding_dim":    ctx.diseased_embeddings.shape[1],
-        "disease_axis_norm": round(axis_norm, 4),
+        "n_diseased":           int(ctx.diseased_embeddings.shape[0]),
+        "n_healthy":            int(ctx.healthy_embeddings.shape[0]),
+        "embedding_dim":        int(ctx.diseased_embeddings.shape[1]),
+        "disease_axis_norm":    round(axis_norm, 4),
+        "cluster_description":  "SLEDAI 13 non-responders (diseased) vs healthy",
+        "training_source":      training_source,
+        "best_val_acc":         best_val_acc,
     }
 
 
@@ -592,6 +603,37 @@ def _generate_visualizations(inp: Dict, ctx: PipelineContext) -> Dict:
             paths["convergence"] = p
     except Exception as e:
         paths["convergence_error"] = str(e)
+
+    # ── Fig 6: All-patient cluster embedding PCA ────────────────────────────
+    try:
+        from training.train import ALL_EMBEDDINGS_PATH, ALL_LABELS_PATH
+        from training.synthetic_patients import CLUSTER_NAMES
+        if ALL_EMBEDDINGS_PATH.exists() and ALL_LABELS_PATH.exists():
+            all_emb    = np.load(ALL_EMBEDDINGS_PATH)
+            all_labels = np.load(ALL_LABELS_PATH)
+            pca6 = PCA(n_components=2)
+            proj6 = pca6.fit_transform(all_emb)
+
+            cluster_colors = {0: "steelblue", 1: "seagreen", 2: "gold",
+                              3: "tomato",    4: "darkorange"}
+            fig, ax = plt.subplots(figsize=(8, 6))
+            for lbl, color in cluster_colors.items():
+                mask = all_labels == lbl
+                name = CLUSTER_NAMES.get(lbl, str(lbl))
+                ax.scatter(proj6[mask, 0], proj6[mask, 1],
+                           c=color, label=f"{lbl}: {name} (n={mask.sum()})",
+                           alpha=0.7, s=35, zorder=3)
+            ax.set_xlabel(f"PC1 ({pca6.explained_variance_ratio_[0]:.1%} var)")
+            ax.set_ylabel(f"PC2 ({pca6.explained_variance_ratio_[1]:.1%} var)")
+            ax.set_title("iMEMORY 128-d Embedding Space (PCA) — 5 Clinical Clusters")
+            ax.legend(fontsize=7, loc="best")
+            fig.tight_layout()
+            p = _fpath("cluster_embeddings")
+            fig.savefig(p, dpi=130)
+            plt.close(fig)
+            paths["cluster_embeddings"] = p
+    except Exception as e:
+        paths["cluster_embeddings_error"] = str(e)
 
     ctx.figure_paths = paths
     return {"figure_paths": paths}
