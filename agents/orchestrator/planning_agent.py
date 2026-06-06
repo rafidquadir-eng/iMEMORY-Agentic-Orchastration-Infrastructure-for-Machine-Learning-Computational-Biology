@@ -40,7 +40,14 @@ explicit about acceptance criteria so the execution agent's output can be audite
 _REPORT_SYSTEM = """You are a scientific writer for iMEMORY, a deep-learning
 target-discovery platform. Write a structured, professional markdown report from
 the provided pipeline results. Be quantitative, precise, and include all requested
-sections. Use markdown tables where specified. Flag synthetic-data limitations clearly."""
+sections. Use markdown tables where specified. Flag synthetic-data limitations clearly.
+
+You MUST include these EXACT section headers (use them verbatim):
+  # iMEMORY Drug Discovery Report
+  ## Therapeutic Signature
+  ## LINCS Screen Results
+  ## De Novo Candidates
+  ## Recovery Analysis"""
 
 
 class PlanningAgent:

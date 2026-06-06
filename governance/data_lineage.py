@@ -16,9 +16,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from anthropic import Anthropic
 
-_SQL_SYSTEM = """You translate a natural-language question into a single, safe,
-read-only SQLite SELECT statement over a table named `cohort`. Return ONLY the SQL,
-no prose, no code fences. Never write INSERT, UPDATE, DELETE, DROP, or ALTER."""
+_SQL_SYSTEM_TMPL = """You translate a natural-language question into a single, safe,
+read-only SQLite SELECT statement over a table named `cohort`.
+The table has exactly these columns: {columns}.
+Return ONLY the SQL, no prose, no code fences.
+Never write INSERT, UPDATE, DELETE, DROP, or ALTER."""
 
 
 class DataLineage:
@@ -43,11 +45,21 @@ class CohortSQL:
         self.client = client or Anthropic()
         self.model = model or os.environ.get("IMEMORY_EXECUTOR_MODEL", "claude-sonnet-4-20250514")
 
+    def _get_columns(self) -> str:
+        conn = sqlite3.connect(self.sqlite_path)
+        try:
+            cols = [row[1] for row in conn.execute("PRAGMA table_info(cohort)").fetchall()]
+        finally:
+            conn.close()
+        return ", ".join(cols)
+
     def _generate_sql(self, question: str) -> str:
+        columns = self._get_columns()
+        system  = _SQL_SYSTEM_TMPL.format(columns=columns)
         resp = self.client.messages.create(
             model=self.model,
             max_tokens=300,
-            system=_SQL_SYSTEM,
+            system=system,
             messages=[{"role": "user", "content": question}],
         )
         sql = "".join(b.text for b in resp.content if b.type == "text").strip()
